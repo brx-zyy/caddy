@@ -327,9 +327,17 @@ func (m MatchVarsRE) MatchWithError(r *http.Request) (bool, error) {
 	vars := r.Context().Value(VarsCtxKey).(map[string]any)
 	repl := r.Context().Value(caddy.ReplacerCtxKey).(*caddy.Replacer)
 
-	var match bool
 	var varStr string
 	var varValue any
+
+	// Defer publishing regexp captures until every variable has matched.
+	// Otherwise, a failed multi-variable match could leave captures behind.
+	type pendingMatch struct {
+		matcher *MatchRegexp
+		input   string
+	}
+	pending := make([]pendingMatch, 0, len(m))
+
 	for key, val := range m {
 		if strings.HasPrefix(key, "{") &&
 			strings.HasSuffix(key, "}") &&
@@ -366,11 +374,20 @@ func (m MatchVarsRE) MatchWithError(r *http.Request) (bool, error) {
 		// already final and must not be re-expanded, as that would allow
 		// user input like {env.SECRET} to be evaluated.
 
-		if match = val.Match(varStr, repl); match {
-			return match, nil
+		if !val.compiled.MatchString(varStr) {
+			return false, nil
 		}
+		pending = append(pending, pendingMatch{matcher: val, input: varStr})
 	}
-	return false, nil
+
+	if len(pending) == 0 {
+		return false, nil
+	}
+
+	for _, item := range pending {
+		item.matcher.Match(item.input, repl)
+	}
+	return true, nil
 }
 
 // CELLibrary produces options that expose this matcher for use in CEL
