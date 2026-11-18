@@ -158,6 +158,43 @@ func TestMatchVarsREDoesNotExpandResolvedValues(t *testing.T) {
 		})
 	}
 }
+func TestMatchVarsRERequiresAllVariables(t *testing.T) {
+	tests := []struct {
+		name string
+		vars map[string]any
+		want bool
+	}{
+		{name: "both match", vars: map[string]any{"user": "alice", "role": "admin"}, want: true},
+		{name: "only first matches", vars: map[string]any{"user": "alice", "role": "viewer"}, want: false},
+		{name: "only second matches", vars: map[string]any{"user": "bob", "role": "admin"}, want: false},
+		{name: "neither matches", vars: map[string]any{"user": "bob", "role": "viewer"}, want: false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			matcher := MatchVarsRE{
+				"user": &MatchRegexp{Pattern: "^(?P<username>alice)$", Name: "user"},
+				"role": &MatchRegexp{Pattern: "^admin$", Name: "role"},
+			}
+			if err := matcher.Provision(caddy.Context{}); err != nil {
+				t.Fatal(err)
+			}
+			req, repl := newVarsTestRequest(t, "", nil, tc.vars)
+			got, err := matcher.MatchWithError(req)
+			if err != nil {
+				t.Fatalf("MatchWithError() error = %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("MatchWithError() = %t, want %t", got, tc.want)
+			}
+			_, hasCapture := repl.Get("http.regexp.user.username")
+			if hasCapture != tc.want {
+				t.Fatalf("capture present = %t, want %t", hasCapture, tc.want)
+			}
+		})
+	}
+}
+
 // TestVarsMatchersTreatErrorsByType verifies the error handling split in the
 // vars matchers: only the request-body limit marker aborts request handling,
 // while unrelated errors are matched on their text exactly like before.
